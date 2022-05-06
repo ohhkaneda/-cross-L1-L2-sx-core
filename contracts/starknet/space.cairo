@@ -18,7 +18,7 @@ from contracts.starknet.lib.vote import Vote
 from contracts.starknet.lib.choice import Choice
 from contracts.starknet.lib.proposal_outcome import ProposalOutcome
 from contracts.starknet.lib.hash_array import hash_array
-
+from contracts.starknet.lib.array2d import Immutable2DArray, construct_array2d, get_sub_array
 @storage_var
 func voting_delay() -> (delay : felt):
 end
@@ -176,8 +176,7 @@ func get_cumulated_voting_power{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*
     index : felt,
     current_timestamp : felt,
     voter_address : EthAddress,
-    voting_params_len : felt,
-    voting_params : felt*,
+    voting_params_all : Immutable2DArray,
 ) -> (voting_power : Uint256):
     alloc_locals
     # Get voting strategy contract
@@ -188,6 +187,9 @@ func get_cumulated_voting_power{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*
         return (Uint256(0, 0))
     end
 
+    # Extract voting params for the voting strategy specified by index
+    let (voting_params_len, voting_params) = get_sub_array(voting_params_all, index)
+
     let (user_voting_power) = i_voting_strategy.get_voting_power(
         contract_address=voting_strategy_contract,
         timestamp=current_timestamp,
@@ -196,7 +198,7 @@ func get_cumulated_voting_power{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*
         params=voting_params,
     )
     let (additional_voting_power) = get_cumulated_voting_power(
-        index + 1, current_timestamp, voter_address, voting_params_len, voting_params
+        index + 1, current_timestamp, voter_address, voting_params_all
     )
 
     let (voting_power, overflow) = uint256_add(user_voting_power, additional_voting_power)
@@ -254,8 +256,8 @@ func vote{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr : fe
     voter_address : EthAddress,
     proposal_id : felt,
     choice : felt,
-    voting_params_len : felt,
-    voting_params : felt*,
+    voting_params_flat_len : felt,
+    voting_params_flat : felt*,
 ) -> ():
     alloc_locals
 
@@ -290,8 +292,14 @@ func vote{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr : fe
         assert_le(choice, Choice.ABSTAIN)
     end
 
+    # Reconstruct the voting params 2D array (1 sub array per strategy) from the flattened version.
+    # Currently there is no way to pass struct types with pointers in calldata, so we must do it this way.
+    let (voting_params_all : Immutable2DArray) = construct_array2d(
+        voting_params_flat_len, voting_params_flat
+    )
+
     let (user_voting_power) = get_cumulated_voting_power(
-        0, current_timestamp, voter_address, voting_params_len, voting_params
+        0, current_timestamp, voter_address, voting_params_all
     )
 
     let (previous_voting_power) = vote_power.read(proposal_id, choice)
@@ -322,8 +330,8 @@ func propose{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr :
     metadata_uri_len : felt,
     metadata_uri : felt*,
     ethereum_block_number : felt,
-    voting_params_len : felt,
-    voting_params : felt*,
+    voting_params_flat_len : felt,
+    voting_params_flat : felt*,
     execution_params_len : felt,
     execution_params : felt*,
 ) -> ():
@@ -346,8 +354,14 @@ func propose{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr :
     let start_timestamp = current_timestamp + delay
     let end_timestamp = start_timestamp + duration
 
+    # Reconstruct the voting params 2D array (1 sub array per strategy) from the flattened version.
+    # Currently there is no way to pass struct types with pointers in calldata, so we must do it this way.
+    let (voting_params_all : Immutable2DArray) = construct_array2d(
+        voting_params_flat_len, voting_params_flat
+    )
+
     let (voting_power) = get_cumulated_voting_power(
-        0, start_timestamp, proposer_address, voting_params_len, voting_params
+        0, start_timestamp, proposer_address, voting_params_all
     )
 
     # Verify that the proposer has enough voting power to trigger a proposal

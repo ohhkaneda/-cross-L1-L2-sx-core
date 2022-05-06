@@ -110,3 +110,22 @@ export function createExecutionHash(
     txHashes: [txHash1, txHash2],
   };
 }
+
+// Currently there is no way to pass struct types with pointers in calldata, so we must pass the 2d array as a flat array and then reconstruct the type.
+// The structure of the flat array that is output from this function is as follows:
+// flat_array[0] = num_arrays
+// flat_array[1:1+num_arrays] = offsets
+// flat_array[1+num_arrays:] = elements
+export function flatten2DArray(array2D: bigint[][]): bigint[] {
+  const flatArray: bigint[] = [];
+  const num_arrays = BigInt(array2D.length);
+  flatArray.push(num_arrays);
+  let offset = BigInt(0);
+  flatArray.push(offset);
+  for (let i = 0; i < num_arrays - BigInt(1); i++) {
+    offset += BigInt(array2D[i].length);
+    flatArray.push(offset);
+  }
+  const elements = array2D.reduce((accumulator, value) => accumulator.concat(value), []);
+  return flatArray.concat(elements);
+}
