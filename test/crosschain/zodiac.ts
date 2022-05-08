@@ -3,6 +3,7 @@ import { expect } from 'chai';
 import { Contract, ContractFactory } from 'ethers';
 import { starknet, network, ethers } from 'hardhat';
 import { FOR } from '../starknet/shared/types';
+import { flatten2DArray } from '../starknet/shared/helpers';
 import { StarknetContract, HttpNetworkConfig } from 'hardhat/types';
 import { stark } from 'starknet';
 import { strToShortStringArr } from '@snapshot-labs/sx';
@@ -105,7 +106,9 @@ describe('Create proposal, cast vote, and send execution to l1', function () {
     );
     const proposer_address = VITALIK_ADDRESS;
     const proposal_id = BigInt(1);
-    const voting_params: Array<bigint> = [];
+    const votingParamsAll: bigint[][] = [[]];
+    // Cairo cannot handle 2D arrays in calldata so we must flatten the data then reconstruct the individual arrays inside the contract
+    const votingParamsAllFlat = flatten2DArray(votingParamsAll);
     const eth_block_number = BigInt(1337);
     const execution_params: Array<bigint> = [BigInt(l1Executor.address)];
     const calldata = [
@@ -115,8 +118,8 @@ describe('Create proposal, cast vote, and send execution to l1', function () {
       BigInt(metadata_uri.length),
       ...metadata_uri,
       eth_block_number,
-      BigInt(voting_params.length),
-      ...voting_params,
+      BigInt(votingParamsAllFlat.length),
+      ...votingParamsAllFlat,
       BigInt(execution_params.length),
       execution_params,
     ];
@@ -131,11 +134,18 @@ describe('Create proposal, cast vote, and send execution to l1', function () {
     // -- Casts a vote FOR --
     {
       const voter_address = proposer_address;
-      const votingParams: Array<BigInt> = [];
+      const votingParamsAll: bigint[][] = [[]];
+      const votingParamsAllFlat = flatten2DArray(votingParamsAll);
       await authContract.invoke(EXECUTE_METHOD, {
         target: BigInt(spaceContract.address),
         function_selector: BigInt(getSelectorFromName(VOTE_METHOD)),
-        calldata: [voter_address, proposal_id, FOR, BigInt(votingParams.length), ...votingParams],
+        calldata: [
+          voter_address,
+          proposal_id,
+          FOR,
+          BigInt(votingParamsAllFlat.length),
+          ...votingParamsAllFlat,
+        ],
       });
 
       const { proposal_info } = await spaceContract.call('get_proposal_info', {
