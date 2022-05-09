@@ -19,6 +19,8 @@ from contracts.starknet.lib.choice import Choice
 from contracts.starknet.lib.proposal_outcome import ProposalOutcome
 from contracts.starknet.lib.hash_array import hash_array
 from contracts.starknet.lib.array2d import Immutable2DArray, construct_array2d, get_sub_array
+from contracts.starknet.lib.slot_key import get_slot_key
+
 @storage_var
 func voting_delay() -> (delay : felt):
 end
@@ -33,6 +35,12 @@ end
 
 @storage_var
 func voting_strategies(index : felt) -> (voting_strategy_contract : felt):
+end
+
+@storage_var
+func global_voting_params(voting_strategy_contract : felt, index : felt) -> (
+    global_voting_params : felt
+):
 end
 
 @storage_var
@@ -114,8 +122,12 @@ func update_controller{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_c
 end
 
 func register_voting_strategies{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr}(
-    index : felt, _voting_strategies_len : felt, _voting_strategies : felt*
+    index : felt,
+    _voting_strategies_len : felt,
+    _voting_strategies : felt*,
+    global_voting_params_all : Immutable2DArray,
 ):
+    alloc_locals
     if _voting_strategies_len == 0:
         # List is empty
         return ()
@@ -123,13 +135,54 @@ func register_voting_strategies{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*
         # Add voting strategy
         voting_strategies.write(index, _voting_strategies[0])
 
+        # Extract global voting params for the voting strategy
+        let (global_voting_params_len, global_voting_params) = get_sub_array(
+            global_voting_params_all, index
+        )
+
+        # Add global voting params
+        register_global_voting_params(
+            0, _voting_strategies[0], global_voting_params_len, global_voting_params
+        )
+
         if _voting_strategies_len == 1:
             # Nothing left to add, end recursion
             return ()
         else:
             # Recurse
             register_voting_strategies(
-                index + 1, _voting_strategies_len - 1, &_voting_strategies[1]
+                index + 1,
+                _voting_strategies_len - 1,
+                &_voting_strategies[1],
+                global_voting_params_all,
+            )
+            return ()
+        end
+    end
+end
+
+func register_global_voting_params{
+    syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_ptr
+}(
+    index : felt,
+    voting_strategy : felt,
+    _global_voting_params_len : felt,
+    _global_voting_params : felt*,
+):
+    if _global_voting_params_len == 0:
+        # List is empty
+        return ()
+    else:
+        # Store global voting parameter
+        global_voting_params.write(voting_strategy, index, _global_voting_params[0])
+
+        if _global_voting_params_len == 1:
+            # Nothing left to add, end recursion
+            return ()
+        else:
+            # Recurse
+            register_global_voting_params(
+                index + 1, voting_strategy, _global_voting_params_len - 1, &_global_voting_params[1]
             )
             return ()
         end
@@ -219,6 +272,8 @@ func constructor{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_p
     _proposal_threshold : Uint256,
     _executor : felt,
     _controller : felt,
+    _global_voting_params_flat_len : felt,
+    _global_voting_params_flat : felt*,
     _voting_strategies_len : felt,
     _voting_strategies : felt*,
     _authenticators_len : felt,
@@ -243,7 +298,15 @@ func constructor{syscall_ptr : felt*, pedersen_ptr : HashBuiltin*, range_check_p
     executor.write(_executor)
     controller.write(_controller)
 
-    register_voting_strategies(0, _voting_strategies_len, _voting_strategies)
+    # Reconstruct the global voting params 2D array (1 sub array per strategy) from the flattened version.
+    # Currently there is no way to pass struct types with pointers in calldata, so we must do it this way.
+    let (global_voting_params_all : Immutable2DArray) = construct_array2d(
+        _global_voting_params_flat_len, _global_voting_params_flat
+    )
+
+    register_voting_strategies(
+        0, _voting_strategies_len, _voting_strategies, global_voting_params_all
+    )
     register_authenticators(_authenticators_len, _authenticators)
 
     next_proposal_nonce.write(1)
